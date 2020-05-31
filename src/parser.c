@@ -208,6 +208,7 @@ parse_line(struct prog_info *pi, char *line)
 	char temp[LINEBUFFER_LENGTH];
 	struct label *label = NULL;
 	struct macro_call *macro_call;
+	int len;
 
 	while (IS_HOR_SPACE(*line)) line++;			/* At first remove leading spaces / tabs */
 	if (IS_END_OR_COMMENT(*line))				/* Skip comment line or empty line */
@@ -227,38 +228,36 @@ parse_line(struct prog_info *pi, char *line)
 	/* Meta information translation */
 	ptr=line;
 	k=0;
+	len = strlen(ptr);
 	while ((ptr=strchr(ptr, '%')) != NULL) {
 		if (!strncmp(ptr, "%MINUTE%", 8)) {		/* Replacement always shorter than tag -> no length check */
-			k=strftime(ptr,3,"%M", localtime(&pi->time));
-			strcpy(ptr+k,ptr+8);
-			ptr+=k;
-			continue;
+			k=strftime(ptr, 3, "%M", localtime(&pi->time));
+			memmove(ptr+k, ptr+8, len - (ptr+8 - line) + 1);
+			ptr += k;
+			len -= 8-k;
+		} else if (!strncmp(ptr, "%HOUR%", 6)) {
+			k=strftime(ptr, 3, "%H", localtime(&pi->time));
+			memmove(ptr+k, ptr+6, len - (ptr+6 - line) + 1);
+			ptr += k;
+			len -= 6-k;
+		} else if (!strncmp(ptr, "%DAY%", 5)) {
+			k=strftime(ptr, 3, "%d", localtime(&pi->time));
+			memmove(ptr+k, ptr+5, len - (ptr+5 - line) + 1);
+			ptr += k;
+			len -= 5-k;
+		} else if (!strncmp(ptr, "%MONTH%", 7)) {
+			k=strftime(ptr, 3, "%m", localtime(&pi->time));
+			memmove(ptr+k, ptr+7, len - (ptr+7 - line) + 1);
+			ptr += k;
+			len -= 7-k;
+		} else if (!strncmp(ptr, "%YEAR%", 6)) {
+			k=strftime(ptr, 5, "%Y", localtime(&pi->time));
+			memmove(ptr+k, ptr+6, len - (ptr+6 - line) + 1);
+			ptr += k;
+			len -= 6-k;
+		} else {
+			ptr++;
 		}
-		if (!strncmp(ptr, "%HOUR%", 6)) {
-			k=strftime(ptr,3,"%H", localtime(&pi->time));
-			strcpy(ptr+k,ptr+6);
-			ptr+=k;
-			continue;
-		}
-		if (!strncmp(ptr, "%DAY%", 5)) {
-			k=strftime(ptr,3,"%d", localtime(&pi->time));
-			strcpy(ptr+k,ptr+5);
-			ptr+=k;
-			continue;
-		}
-		if (!strncmp(ptr, "%MONTH%", 7)) {
-			k=strftime(ptr,3,"%m", localtime(&pi->time));
-			strcpy(ptr+k,ptr+7);
-			ptr+=k;
-			continue;
-		}
-		if (!strncmp(ptr, "%YEAR%", 6)) {
-			k=strftime(ptr,5,"%Y", localtime(&pi->time));
-			strcpy(ptr+k,ptr+6);
-			ptr+=k;
-			continue;
-		}
-		ptr++;
 	}
 
 //	if(pi->pass == PASS_2)		// TODO : Test
@@ -352,49 +351,68 @@ char *
 get_next_token(char *data, int term)
 {
 	int i = 0, j, anti_comma = False;
+	/* XXX: this does the same thing for TERM_END and TERM_COMMA? */
 	switch (term) {
 	case TERM_END:
-//			while(!IS_END_OR_COMMENT(data[i])) i++; 	Problems with 2. operand == ';'
-		while (((data[i] != ',') || anti_comma) && !(((data[i] == ';') && !anti_comma) || IS_ENDLINE(data[i]))) {
+		/* Skip to next comma or EOL or start of comment, taking into account
+		the possibility for ',' or ';' to be inside quotes. */
+		while (((data[i] != ',') || anti_comma) && ((data[i] != ';') || anti_comma) && !IS_ENDLINE(data[i]))  {
 			if ((data[i] == '\'') || (data[i] == '"'))
 				anti_comma = anti_comma ? False : True;
 			i++;
 		}
 		break;
 	case TERM_SPACE:
+		/* Skip to next horizontal space or EOL or start of comment. */
 		while (!IS_HOR_SPACE(data[i]) && !IS_END_OR_COMMENT(data[i])) i++;
 		break;
 	case TERM_DASH:
+		/* Skip to next dash or EOL or start of comment. */
 		while ((data[i] != '-') && !IS_END_OR_COMMENT(data[i])) i++;
 		break;
 	case TERM_COLON:
+		/* Skip to next colon or EOL. */
 		while ((data[i] != ':') && !IS_ENDLINE(data[i])) i++;
 		break;
 	case TERM_DOUBLEQUOTE:
+		/* Skip to next double quote or EOL. */
 		while ((data[i] != '"') && !IS_ENDLINE(data[i])) i++;
 		break;
 	case TERM_COMMA:
-		while (((data[i] != ',') || anti_comma) && !(((data[i] == ';') && !anti_comma) || IS_ENDLINE(data[i]))) {
+		/* Skip to next comma or EOL or start of comment, taking into account
+		the possibility for ',' or ';' to be inside quotes. */
+		while (((data[i] != ',') || anti_comma) && ((data[i] != ';') || anti_comma) && !IS_ENDLINE(data[i])) {
 			if ((data[i] == '\'') || (data[i] == '"'))
 				anti_comma = anti_comma ? False : True;
 			i++;
 		}
 		break;
 	case TERM_EQUAL:
+		/* Skip to next equals or EOL or start of comment. */
 		while ((data[i] != '=') && !IS_END_OR_COMMENT(data[i])) i++;
 		break;
 	}
+	/* If we hit EOL or a comment, return null. */
 	if (IS_END_OR_COMMENT(data[i])) {
+		/* Null-out the EOL/start of comment. */
 		data[i--] = '\0';
+		/* Null-out everything until the first non-horizontal whitespace
+		character. */
 		while (IS_HOR_SPACE(data[i])) data[i--] = '\0';
 		return (0);
 	}
 	j = i - 1;
+	/* Null-out all horizontal whitespace before the terminator. */
 	while (IS_HOR_SPACE(data[j])) data[j--] = '\0';
+	/* Null-out the terminator itself. */
 	data[i++] = '\0';
+	/* Skip over all horizontal whitespace after the terminator. */
 	while (IS_HOR_SPACE(data[i]) && !IS_END_OR_COMMENT(data[i])) i++;
+	/* If we hit EOL or a comment, return null. */
 	if (IS_END_OR_COMMENT(data[i]))
 		return (0);
+	/* i should now be the index of the first non-whitespace character after
+	the terminator. */
 	return (&data[i]);
 }
 
